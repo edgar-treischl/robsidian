@@ -1,0 +1,4 @@
+Name: Robsidian
+Description: View Obsidian notes in RStudio
+Binding: obsidian_addin
+Interactive: true
