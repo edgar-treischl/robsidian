@@ -192,7 +192,7 @@ obsidian_addin <- function() {
 
   # Server logic
   server <- function(input, output, session) {
-    setwd("~/Documents/GitHub/documentation")
+    #setwd("~/Documents/GitHub/documentation")
 
     # Reactive value for selected file
     selected_file <- reactiveVal(NULL)
