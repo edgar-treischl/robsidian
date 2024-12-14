@@ -1,9 +1,7 @@
 #' The Obsidian Addin
 #'
 #' @description The `obsidian_addin()` creates a shiny app
-#' to manage your gists. Pick a gist, press the copy or the insert
-#' button and the code will be insert.
-#' Furthermore you can create and delete gists as well.
+#' to inspect the obsidian vault.
 #'
 #' @export
 #' @import shiny
@@ -192,7 +190,8 @@ obsidian_addin <- function() {
 
   # Server logic
   server <- function(input, output, session) {
-    #setwd("~/Documents/GitHub/documentation")
+    #home <- Sys.getenv("robsidian_dir")
+    setwd("~/Documents/GitHub/documentation")
 
     # Reactive value for selected file
     selected_file <- reactiveVal(NULL)
@@ -326,7 +325,9 @@ obsidian_addin <- function() {
 
     # Directory tree output
     output$directory_tree <- renderUI({
-      build_directory_tree(".")
+      home <- Sys.getenv("robsidian_dir")
+      #setwd(home)
+      build_directory_tree(home)
     })
 
     # Markdown preview output
