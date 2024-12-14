@@ -186,29 +186,52 @@ obsidian_addin <- function() {
     )
   )
 
-
-
   # Server logic
   server <- function(input, output, session) {
-    #home <- Sys.getenv("robsidian_dir")
-    setwd("~/Documents/GitHub/documentation")
+    # Store home directory in a reactive value with validation
+    home <- reactiveVal({
+      path <- Sys.getenv("robsidian_dir")
+      if (path == "") {
+        cli::cli_abort(
+          c(
+            "Which directory should be used? The `robsidian_dir` environment variable is not set.",
+            "i" = "You can set the environment variable by running:",
+            "    {cli::cli_code('Sys.setenv(robsidian_dir = \"/path/to/your/obsidian/vault\")')}"
+          )
+        )
+      }
+      norm_path <- normalizePath(path, winslash = "/", mustWork = TRUE)
+      if (!dir.exists(norm_path)) {
+        stop("Directory specified in robsidian_dir does not exist: ", norm_path)
+      }
+      norm_path
+    })
 
     # Reactive value for selected file
     selected_file <- reactiveVal(NULL)
 
+    # Function to validate file paths
+    validate_path <- function(path) {
+      if (is.null(path)) return(FALSE)
+      tryCatch({
+        norm_path <- normalizePath(path, winslash = "/", mustWork = TRUE)
+        startsWith(norm_path, home()) && file.exists(norm_path)
+      }, error = function(e) FALSE)
+    }
+
     # Handle title click and initial load
     observeEvent(input$reset_to_readme, {
-      readme_path <- fs::path_abs("README.md")
-      if (file.exists(readme_path)) {
+      readme_path <- file.path(home(), "README.md")
+      if (validate_path(readme_path)) {
         selected_file(readme_path)
       }
-    }, ignoreNULL = FALSE, once = TRUE)  # This handles initial load
+    }, ignoreNULL = FALSE, once = TRUE)
 
     # Handle subsequent title clicks
     observeEvent(input$reset_to_readme, {
-      if (!is.null(input$reset_to_readme)) {  # Only handle actual clicks, not initial NULL
-        readme_path <- fs::path_abs("README.md")
-        if (file.exists(readme_path)) {
+      if (!is.null(input$reset_to_readme)) {
+        readme_path <- file.path(home(), "README.md")
+        if (validate_path(readme_path)) {
           selected_file(readme_path)
         }
       }
@@ -216,7 +239,9 @@ obsidian_addin <- function() {
 
     # Update selected file when clicked
     observeEvent(input$selected_file, {
-      selected_file(input$selected_file)
+      if (!is.null(input$selected_file) && validate_path(input$selected_file)) {
+        selected_file(input$selected_file)
+      }
     })
 
     # PDF creation function with error handling
@@ -227,14 +252,14 @@ obsidian_addin <- function() {
 
       create_error_pdf <- function(error_msg) {
         error_tex <- sprintf("\\documentclass{article}
-        \\begin{document}
-        \\section*{Error Creating PDF}
-        \\textbf{The following error occurred while trying to create the PDF:}
+      \\begin{document}
+      \\section*{Error Creating PDF}
+      \\textbf{The following error occurred while trying to create the PDF:}
 
-        \\begin{verbatim}
-        %s
-        \\end{verbatim}
-        \\end{document}", error_msg)
+      \\begin{verbatim}
+      %s
+      \\end{verbatim}
+      \\end{document}", error_msg)
 
         error_tex_file <- file.path(temp_dir, "error.tex")
         writeLines(error_tex, error_tex_file)
@@ -298,36 +323,44 @@ obsidian_addin <- function() {
       }
     )
 
-    # Directory tree builder
+    # Directory tree builder with stricter path validation
     build_directory_tree <- function(path, prefix = "") {
-      items <- fs::dir_ls(path)
-      tags$ul(
-        lapply(items, function(item) {
-          item_name <- fs::path_file(item)
-          if (fs::dir_exists(item)) {
-            tags$li(
-              tags$span(class = "folder", item_name),
-              build_directory_tree(item, paste0(prefix, "/", item_name))
-            )
-          } else if (tolower(fs::path_ext(item)) == "md") {
-            tags$li(
-              tags$a(
-                href = "#",
-                onclick = sprintf("Shiny.setInputValue('selected_file', '%s')",
-                                  fs::path_abs(item)),
-                item_name
+      if (!validate_path(path)) {
+        return(NULL)
+      }
+
+      tryCatch({
+        items <- fs::dir_ls(path)
+        tags$ul(
+          lapply(items, function(item) {
+            if (!startsWith(normalizePath(item, winslash = "/"), home())) {
+              return(NULL)
+            }
+
+            item_name <- fs::path_file(item)
+            if (fs::dir_exists(item)) {
+              tags$li(
+                tags$span(class = "folder", item_name),
+                build_directory_tree(item, paste0(prefix, "/", item_name))
               )
-            )
-          }
-        })
-      )
+            } else if (tolower(fs::path_ext(item)) == "md") {
+              tags$li(
+                tags$a(
+                  href = "#",
+                  onclick = sprintf("Shiny.setInputValue('selected_file', '%s')",
+                                    fs::path_abs(item)),
+                  item_name
+                )
+              )
+            }
+          })
+        )
+      }, error = function(e) NULL)
     }
 
     # Directory tree output
     output$directory_tree <- renderUI({
-      home <- Sys.getenv("robsidian_dir")
-      #setwd(home)
-      build_directory_tree(home)
+      build_directory_tree(home())
     })
 
     # Markdown preview output

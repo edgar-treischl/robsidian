@@ -8,7 +8,5 @@ obsidian_addin()
 }
 \description{
 The \code{obsidian_addin()} creates a shiny app
-to manage your gists. Pick a gist, press the copy or the insert
-button and the code will be insert.
-Furthermore you can create and delete gists as well.
+to inspect the obsidian vault.
 }
