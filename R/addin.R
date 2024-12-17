@@ -13,7 +13,7 @@ obsidian_addin <- function() {
       href = "#",
       onclick = "Shiny.setInputValue('reset_to_readme', Math.random())",
       style = "text-decoration: none; color: inherit; cursor: pointer;",
-      "Doc"
+      "Obsedian Preview"
     ),
     fillable = TRUE,
     padding = 0,
@@ -177,7 +177,8 @@ obsidian_addin <- function() {
           div(
             class = "d-flex align-items-center gap-2",
             div(class = "navbar-toggle-action"),
-            "File Preview"
+            "Preview:",
+            textOutput("current_file", inline = TRUE)
           ),
           uiOutput("pdf_button")
         )
@@ -188,6 +189,12 @@ obsidian_addin <- function() {
 
   # Server logic
   server <- function(input, output, session) {
+    output$current_file <- renderText({
+      req(selected_file())
+      # Get relative path from home directory
+      rel_path <- fs::path_rel(selected_file(), home())
+    })
+
     # Store home directory in a reactive value with validation
     home <- reactiveVal({
       path <- Sys.getenv("robsidian_dir")
