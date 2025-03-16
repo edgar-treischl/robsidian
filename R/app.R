@@ -153,6 +153,7 @@ process_r_file <- function(file_path, doc_level, include_output = FALSE) {
 }
 
 # Function to execute R code
+# Function to execute R code and split chunks at comments
 execute_r_with_evaluate <- function(code_lines) {
   # Load required packages
   if (!requireNamespace("evaluate", quietly = TRUE)) {
@@ -162,6 +163,9 @@ execute_r_with_evaluate <- function(code_lines) {
   result <- character(0)
   current_chunk <- character(0)
   in_chunk <- FALSE
+
+  # Create a single shared environment for all chunks
+  shared_env <- new.env(parent = globalenv())
 
   # Process line by line, splitting at comments
   for (i in seq_along(code_lines)) {
@@ -174,7 +178,7 @@ execute_r_with_evaluate <- function(code_lines) {
     if (is_comment) {
       # If we were collecting code, finalize the chunk
       if (length(current_chunk) > 0) {
-        chunk_result <- evaluate_chunk(current_chunk)
+        chunk_result <- evaluate_chunk(current_chunk, env = shared_env)
         result <- c(result, chunk_result)
         current_chunk <- character(0)
         in_chunk <- FALSE
@@ -199,7 +203,7 @@ execute_r_with_evaluate <- function(code_lines) {
 
   # Finalize any remaining chunk
   if (length(current_chunk) > 0) {
-    chunk_result <- evaluate_chunk(current_chunk)
+    chunk_result <- evaluate_chunk(current_chunk, env = shared_env)
     result <- c(result, chunk_result)
   }
 
@@ -207,10 +211,10 @@ execute_r_with_evaluate <- function(code_lines) {
 }
 
 # Helper function to evaluate a single chunk of code
-evaluate_chunk <- function(chunk_lines) {
+evaluate_chunk <- function(chunk_lines, env = NULL) {
   tryCatch({
-    # Create a new environment for execution
-    eval_env <- new.env(parent = globalenv())
+    # Use the provided environment or create a new one
+    eval_env <- if (!is.null(env)) env else new.env(parent = globalenv())
 
     # Combine the chunk lines
     chunk_text <- paste(chunk_lines, collapse = "\n")
@@ -265,7 +269,6 @@ evaluate_chunk <- function(chunk_lines) {
     return(c("```r", chunk_lines, paste0("#> Error: ", error_message), "```"))
   })
 }
-
 
 
 
