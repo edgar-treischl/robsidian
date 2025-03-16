@@ -34,19 +34,6 @@ safe_read_file <- function(file_path) {
   })
 }
 
-# Extract YAML header from content
-extract_yaml <- function(content) {
-  yaml_lines <- NULL
-  if (length(which(content == "---")) >= 2) {
-    yaml_start <- which(content == "---")[1]
-    yaml_end <- which(content == "---")[2]
-    if (!is.na(yaml_start) && !is.na(yaml_end) && yaml_end > yaml_start) {
-      yaml_lines <- content[yaml_start:yaml_end]
-      content <- content[(yaml_end + 1):length(content)]
-    }
-  }
-  return(list(yaml = yaml_lines, content = content))
-}
 
 # Process R file
 process_r_file <- function(file_path, doc_level, include_output = FALSE) {
@@ -141,123 +128,7 @@ process_r_file <- function(file_path, doc_level, include_output = FALSE) {
   })
 }
 
-# Function to execute R code
-# Function to execute R code and split chunks at comments
-execute_r_with_evaluate <- function(code_lines) {
-  # Load required packages
-  if (!requireNamespace("evaluate", quietly = TRUE)) {
-    install.packages("evaluate")
-  }
 
-  result <- character(0)
-  current_chunk <- character(0)
-  in_chunk <- FALSE
-
-  # Create a single shared environment for all chunks
-  shared_env <- new.env(parent = globalenv())
-
-  # Process line by line, splitting at comments
-  for (i in seq_along(code_lines)) {
-    line <- code_lines[i]
-
-    # Check if line is a comment (starts with #, but not #')
-    is_comment <- grepl("^\\s*#[^']", line)
-    is_empty <- trimws(line) == ""
-
-    if (is_comment) {
-      # If we were collecting code, finalize the chunk
-      if (length(current_chunk) > 0) {
-        chunk_result <- evaluate_chunk(current_chunk, env = shared_env)
-        result <- c(result, chunk_result)
-        current_chunk <- character(0)
-        in_chunk <- FALSE
-      }
-
-      # Add the comment as normal text
-      result <- c(result, line)
-    } else if (is_empty) {
-      # Empty lines within a chunk stay with the chunk
-      if (in_chunk) {
-        current_chunk <- c(current_chunk, line)
-      } else {
-        # Empty lines outside chunks just get added
-        result <- c(result, line)
-      }
-    } else {
-      # This is code - add to current chunk
-      current_chunk <- c(current_chunk, line)
-      in_chunk <- TRUE
-    }
-  }
-
-  # Finalize any remaining chunk
-  if (length(current_chunk) > 0) {
-    chunk_result <- evaluate_chunk(current_chunk, env = shared_env)
-    result <- c(result, chunk_result)
-  }
-
-  return(result)
-}
-
-# Helper function to evaluate a single chunk of code
-evaluate_chunk <- function(chunk_lines, env = NULL) {
-  tryCatch({
-    # Use the provided environment or create a new one
-    eval_env <- if (!is.null(env)) env else new.env(parent = globalenv())
-
-    # Combine the chunk lines
-    chunk_text <- paste(chunk_lines, collapse = "\n")
-
-    # Evaluate and get outputs
-    outputs <- evaluate::evaluate(chunk_text, envir = eval_env)
-
-    # Process outputs with #> prefix format
-    result_lines <- character(0)
-
-    for (output in outputs) {
-      if (inherits(output, "source")) {
-        # Add source code
-        source_lines <- strsplit(as.character(output), "\n")[[1]]
-        result_lines <- c(result_lines, source_lines)
-      } else if (inherits(output, "character") || inherits(output, "output")) {
-        # Text output
-        if (length(output) > 0 && !all(trimws(output) == "")) {
-          for (out_line in output) {
-            result_lines <- c(result_lines, paste0("#> ", out_line))
-          }
-        }
-      } else if (inherits(output, "message") || inherits(output, "warning") || inherits(output, "error")) {
-        # Messages, warnings, errors
-        msg_type <- class(output)[1]
-        msg_content <- conditionMessage(output)
-        msg_lines <- strsplit(msg_content, "\n")[[1]]
-
-        result_lines <- c(result_lines, paste0("#> ", toupper(msg_type), ":"))
-        for (msg_line in msg_lines) {
-          result_lines <- c(result_lines, paste0("#> ", msg_line))
-        }
-      } else if (inherits(output, "recordedplot")) {
-        # Skip plots or handle differently
-        result_lines <- c(result_lines, "#> [Plot output not shown]")
-      } else if (inherits(output, "value") && !is.null(output$visible) && output$visible) {
-        # Print visible values
-        value_text <- capture.output(print(output$value))
-        if (length(value_text) > 0 && !all(trimws(value_text) == "")) {
-          for (val_line in value_text) {
-            result_lines <- c(result_lines, paste0("#> ", val_line))
-          }
-        }
-      }
-    }
-
-    # Return as R code block
-    return(c("```r", result_lines, "```"))
-  }, error = function(e) {
-    # If evaluation fails, return with error message
-    error_message <- conditionMessage(e)
-    return(c("```r", chunk_lines, paste0("#> Error: ", error_message), "```"))
-  })
-}
 
 
 
@@ -266,7 +137,7 @@ evaluate_chunk <- function(chunk_lines, env = NULL) {
 
 create_apui <- function() {
   ui <- bslib::page_sidebar(
-    title = "Obsidian Markdown Creator",
+    title = "R to MD",
     shinyjs::useShinyjs(),
     sidebar = bslib::sidebar(
       shiny::fileInput("file", "Upload R file", accept = c(".R")),
