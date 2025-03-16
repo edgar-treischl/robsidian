@@ -1,18 +1,16 @@
-#' Title
+#' #' Title
+#' #'
+#' #' @param x Does this
+#' #'
+#' #' @returns Return that
+#' #'
 #'
-#' @param x Does this
+#' mymean <- mean(c(1,2,13))
 #'
-#' @returns Return that
+#' ## I am a sub Header
 #'
-
-mean(c(1,2,13))
-
-
-
-# I am a Header
-
-library(ggplot2)
-ggplot(data=mpg, aes(x=class)) + geom_bar()
-
-
-print("Hello World")
+#' library(ggplot2)
+#' ploti <- ggplot(data=mpg, aes(x=class)) + geom_bar()
+#'
+#'
+#' ## paste0("The mean is ", mymean)
