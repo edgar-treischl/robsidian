@@ -15,11 +15,9 @@ md_creator <- function() {
 # Constants
 DOCUMENTATION_CHOICES <- c(
   "Code only (level 0)" = 0,
-  "Code with chunk headers (level 1)" = 1,
-  "Code with all text as roxygen comments (level 2)" = 2
+  "Extract (Roxygen) comments" = 1
 )
 
-# Utility Functions --------------------------------------------------------
 
 # Safely read file contents
 safe_read_file <- function(file_path) {
@@ -51,92 +49,252 @@ extract_yaml <- function(content) {
 }
 
 # Process R file
-process_r_file <- function(file_path, preserve_yaml, doc_level) {
+# Process R file with optional output
+process_r_file <- function(file_path, doc_level, include_output = FALSE) {
   tryCatch({
+    # Read the R code content
     r_content <- safe_read_file(file_path)
-    r_content <- r_content[!is.na(r_content)]
+    r_content <- r_content[!is.na(r_content)]  # Remove any NA values
 
-    if (doc_level == 2) {
-      # Convert roxygen comments to text
-      r_content <- base::gsub("^#' ", "", r_content)
-    } else if (doc_level == 1) {
-      # Keep chunk headers
-      r_content <- base::gsub("^#' @", "", r_content)
+    if (doc_level == 0) {
+      # Simply wrap everything in an R code block
+      if (!include_output) {
+        formatted_content <- c("```r", r_content, "```")
+      } else {
+        # Execute code and capture output using evaluate
+        formatted_content <- execute_r_with_evaluate(r_content)
+      }
+      return(list(content = formatted_content, yaml = NULL))
+    }
+    else if (doc_level == 1) {
+      # Code that extracts roxygen comments
+
+      # Find first non-empty, non-comment line (code start)
+      code_start_pattern <- "^\\s*[^#\\s]"
+      roxygen_pattern <- "^\\s*#'"
+
+      # Start with empty collections
+      formatted_content <- character(0)
+      actual_code <- character(0)
+
+      # Check if there are roxygen comments at the start
+      has_roxygen <- any(grepl(roxygen_pattern, r_content))
+
+      if (has_roxygen) {
+        # Extract roxygen comments and convert to markdown
+        roxygen_lines <- grep(roxygen_pattern, r_content, value = TRUE)
+
+        # Process roxygen comments to markdown
+        md_lines <- gsub(roxygen_pattern, "", roxygen_lines)
+        md_lines <- trimws(md_lines)
+
+        # Extract title and add to formatted content
+        if (length(md_lines) > 0) {
+          title_line <- md_lines[1]
+          md_lines <- md_lines[-1]  # Remove title from remaining content
+
+          # Add title as H1
+          formatted_content <- c(formatted_content, paste("# ", title_line), "")
+        }
+
+        # Add remaining roxygen content
+        if (length(md_lines) > 0) {
+          formatted_content <- c(formatted_content, md_lines, "")
+        }
+
+        # Find the first code line after roxygen comments
+        roxygen_indices <- grep(roxygen_pattern, r_content)
+        if (length(roxygen_indices) > 0) {
+          last_roxygen <- max(roxygen_indices)
+          if (last_roxygen < length(r_content)) {
+            # Extract actual code (after roxygen)
+            actual_code <- r_content[(last_roxygen+1):length(r_content)]
+
+            # Remove any empty lines at the start
+            while (length(actual_code) > 0 && trimws(actual_code[1]) == "") {
+              actual_code <- actual_code[-1]
+            }
+          }
+        }
+      } else {
+        # No roxygen comments, treat all content as code
+        actual_code <- r_content
+      }
+
+      # Process normal comments after code
+      after_comments <- character(0)
+
+      # Add code section with or without output
+      if (length(actual_code) > 0) {
+        # THIS IS THE KEY CHANGE: We need to check include_output here
+        if (!include_output) {
+          formatted_content <- c(formatted_content, "```r", actual_code, "```")
+        } else {
+          # Execute code and capture output
+          code_with_output <- execute_r_with_evaluate(actual_code)
+          formatted_content <- c(formatted_content, code_with_output)
+        }
+      }
+
+      # Add comments that appear after code
+      if (length(after_comments) > 0) {
+        formatted_content <- c(formatted_content, "", after_comments)
+      }
+
+      return(list(content = formatted_content, yaml = NULL))
     }
 
-    basic_md <- r_content  # Don't wrap in triple backticks
-    temp_r <- base::tempfile(fileext = ".R")
-    base::writeLines(r_content, temp_r, useBytes = TRUE)
-
-    rmd_content <- tryCatch({
-      temp_spin <- knitr::spin(temp_r, knit = FALSE, format = "Rmd", comment = c("^#+'[ ]?", "^#+'[ ]?"))
-      base::readLines(temp_spin, warn = FALSE)
-    }, error = function(e) {
-      basic_md
-    })
-
-    temp_output <- base::tempfile(fileext = ".md")
-
-    tryCatch({
-      temp_rmd <- base::tempfile(fileext = ".Rmd")
-      base::writeLines(rmd_content, temp_rmd)
-      rmarkdown::render(temp_rmd, output_format = rmarkdown::md_document(variant = "gfm"), output_file = temp_output, quiet = TRUE)
-      content <- base::readLines(temp_output, warn = FALSE)
-    }, error = function(e) {
-      content <- basic_md
-    })
-
-    return(list(content = content, yaml = NULL))
   }, error = function(e) {
+    # Fallback: return the original content in a code block
     r_content <- safe_read_file(file_path)
-    return(list(content = r_content, yaml = NULL))
+    formatted_content <- c("```r", r_content, "```")
+    return(list(content = formatted_content, yaml = NULL))
   })
 }
+
+# Function to execute R code
+# Function to execute R code and format output with #> prefix
+execute_r_with_evaluate <- function(code_lines) {
+  # Load required packages
+  if (!requireNamespace("evaluate", quietly = TRUE)) {
+    install.packages("evaluate")
+  }
+
+  tryCatch({
+    # Combine code lines into a single string
+    code_text <- paste(code_lines, collapse = "\n")
+
+    # Create a new environment for execution
+    eval_env <- new.env(parent = globalenv())
+
+    # Evaluate the code and capture all outputs
+    outputs <- evaluate::evaluate(code_text, envir = eval_env)
+
+    # Process the outputs to build code+output format
+    result_lines <- character(0)
+
+    # Track if we need to add a blank line
+    need_blank_line <- FALSE
+
+    for (i in seq_along(outputs)) {
+      if (inherits(outputs[[i]], "source")) {
+        # Get the source code lines
+        source_lines <- strsplit(as.character(outputs[[i]]), "\n")[[1]]
+
+        # Add blank line if needed (between code chunks)
+        if (need_blank_line && length(source_lines) > 0) {
+          result_lines <- c(result_lines, "")
+          need_blank_line <- FALSE
+        }
+
+        # Add the source lines
+        for (source_line in source_lines) {
+          result_lines <- c(result_lines, source_line)
+        }
+
+      } else if (inherits(outputs[[i]], "character") || inherits(outputs[[i]], "output")) {
+        # Text output
+        if (length(outputs[[i]]) > 0 && !all(trimws(outputs[[i]]) == "")) {
+          for (output_line in outputs[[i]]) {
+            if (trimws(output_line) != "") {
+              result_lines <- c(result_lines, paste0("#> ", output_line))
+            }
+          }
+          need_blank_line <- TRUE
+        }
+
+      } else if (inherits(outputs[[i]], "message")) {
+        # Message output
+        msg_content <- conditionMessage(outputs[[i]])
+        msg_lines <- strsplit(msg_content, "\n")[[1]]
+        for (msg_line in msg_lines) {
+          if (trimws(msg_line) != "") {
+            result_lines <- c(result_lines, paste0("#> ", msg_line))
+          }
+        }
+        need_blank_line <- TRUE
+
+      } else if (inherits(outputs[[i]], "warning")) {
+        # Warning output
+        warn_content <- conditionMessage(outputs[[i]])
+        warn_lines <- strsplit(warn_content, "\n")[[1]]
+        result_lines <- c(result_lines, "#> Warning:")
+        for (warn_line in warn_lines) {
+          if (trimws(warn_line) != "") {
+            result_lines <- c(result_lines, paste0("#> ", warn_line))
+          }
+        }
+        need_blank_line <- TRUE
+
+      } else if (inherits(outputs[[i]], "error")) {
+        # Error output
+        error_content <- conditionMessage(outputs[[i]])
+        error_lines <- strsplit(error_content, "\n")[[1]]
+        result_lines <- c(result_lines, "#> Error:")
+        for (error_line in error_lines) {
+          if (trimws(error_line) != "") {
+            result_lines <- c(result_lines, paste0("#> ", error_line))
+          }
+        }
+        need_blank_line <- TRUE
+
+      } else if (inherits(outputs[[i]], "recordedplot")) {
+        # Skip plots or handle differently if needed
+        result_lines <- c(result_lines, "#> [Plot output not shown]")
+        need_blank_line <- TRUE
+
+      } else if (inherits(outputs[[i]], "value") && !is.null(outputs[[i]]$visible) && outputs[[i]]$visible) {
+        # Print visible values
+        value_text <- capture.output(print(outputs[[i]]$value))
+        if (length(value_text) > 0 && !all(trimws(value_text) == "")) {
+          for (val_line in value_text) {
+            if (trimws(val_line) != "") {
+              result_lines <- c(result_lines, paste0("#> ", val_line))
+            }
+          }
+          need_blank_line <- TRUE
+        }
+      }
+    }
+
+    # Ensure we end with a blank line for readability
+    if (length(result_lines) > 0 && trimws(result_lines[length(result_lines)]) != "") {
+      result_lines <- c(result_lines, "")
+    }
+
+    # Return code and outputs in a code block
+    return(c("```r", result_lines, "```"))
+  }, error = function(e) {
+    # If overall evaluation fails, format as an error after the code
+    error_message <- conditionMessage(e)
+    error_lines <- strsplit(error_message, "\n")[[1]]
+
+    # Return the code with the error message
+    result <- c(code_lines, "#> Error: ")
+    for (line in error_lines) {
+      result <- c(result, paste0("#> ", line))
+    }
+
+    return(c("```r", result, "```"))
+  })
+}
+
+
 
 # Process Rmd file
-process_rmd_file <- function(file_path, preserve_yaml) {
-  tryCatch({
-    original_content <- safe_read_file(file_path)
-    yaml_result <- extract_yaml(original_content)
 
-    yaml_header <- if (preserve_yaml && !is.null(yaml_result$yaml)) {
-      yaml_result$yaml
-    } else {
-      NULL
-    }
-
-    temp_rmd <- base::tempfile(fileext = ".Rmd")
-    base::writeLines(yaml_result$content, temp_rmd)
-    temp_output <- base::tempfile(fileext = ".md")
-
-    tryCatch({
-      rmarkdown::render(temp_rmd, output_format = rmarkdown::md_document(variant = "gfm"), output_file = temp_output, quiet = TRUE)
-      content <- base::readLines(temp_output, warn = FALSE)
-    }, error = function(e) {
-      content <- yaml_result$content
-    })
-
-    return(list(content = content, yaml = yaml_header))
-  }, error = function(e) {
-    content <- safe_read_file(file_path)
-    return(list(content = content, yaml = NULL))
-  })
-}
 
 create_apui <- function() {
   ui <- bslib::page_sidebar(
     title = "Obsidian Markdown Creator",
     shinyjs::useShinyjs(),
     sidebar = bslib::sidebar(
-      shiny::fileInput("file", "Upload R or Rmd file", accept = c(".R", ".Rmd", ".rmd")),
-      bslib::tooltip(
-        shiny::selectInput("documentation", "Documentation Level", choices = DOCUMENTATION_CHOICES, selected = 1),
-        "Level 0: Pure code only\nLevel 1: Code with chunk headers\nLevel 2: Code with all text as roxygen comments"
-      ),
-      shiny::checkboxInput("preserve_yaml", "Preserve YAML Header (for Rmd files)", value = TRUE),
+      shiny::fileInput("file", "Upload R file", accept = c(".R")),
+      shiny::selectInput("documentation", "Documentation Level", choices = DOCUMENTATION_CHOICES, selected = 1),
+      shiny::checkboxInput("include_output", "Include R chunk output", value = FALSE),
       shiny::actionButton("convert", "Convert", class = "btn-primary w-100"),
       shiny::hr(),
-      shiny::downloadButton("downloadMD", "Download Markdown", class = "w-100"),
+      shiny::downloadButton("downloadMD", "Download MD", class = "w-100"),
       shiny::actionButton("createNew", "Open in RStudio", class = "btn-primary mt-2 w-100", icon = shiny::icon("r-project"))
     ),
     bslib::card(
@@ -159,25 +317,25 @@ create_apui <- function() {
 }
 
 create_appserver <- function() {
-  server <- function(input, output, session) {
+  function(input, output, session) {
     rv <- shiny::reactiveValues(
-      content = NULL,
+      content = "",
       yaml = NULL,
       processing = FALSE,
       last_conversion = NULL
     )
 
-    shiny::observeEvent(input$file, {
-      rv$yaml <- NULL
-      if (!is.null(input$file)) {
-        shinyjs::click("convert")
-      }
-    })
-
+    # Convert button action
     shiny::observeEvent(input$convert, {
       shiny::req(input$file)
       rv$processing <- TRUE
       rv$last_conversion <- NULL
+
+      # Show a message if including output
+      if(input$include_output) {
+        shiny::showNotification("Executing R code and capturing output. This may take a moment...",
+                                type = "message", duration = 3)
+      }
 
       shiny::withProgress(message = 'Processing file...', value = 0, {
         tryCatch({
@@ -186,22 +344,24 @@ create_appserver <- function() {
 
           shiny::incProgress(0.3)
 
-          doc_level <- input$documentation
+          doc_level <- as.numeric(input$documentation)
+          include_output <- input$include_output
 
-          result <- if (tolower(file_ext) == "r") {
-            process_r_file(file_path, input$preserve_yaml, doc_level)
-          } else if (tolower(file_ext) %in% c("rmd", "md")) {
-            process_rmd_file(file_path, input$preserve_yaml)
-          }
+          # Only process R files
+          if (tolower(file_ext) == "r") {
+            result <- process_r_file(file_path, doc_level, include_output)
 
-          shiny::incProgress(0.3)
+            shiny::incProgress(0.3)
 
-          if (!is.null(result$content)) {
-            rv$content <- base::paste(result$content, collapse = "\n")
-            rv$yaml <- result$yaml
-            rv$last_conversion <- base::Sys.time()
+            if (!is.null(result$content)) {
+              rv$content <- base::paste(result$content, collapse = "\n")
+              rv$yaml <- result$yaml
+              rv$last_conversion <- base::Sys.time()
+            } else {
+              shiny::showNotification("Error: Empty content returned", type = "error")
+            }
           } else {
-            shiny::showNotification("Error: Empty content returned", type = "error")
+            shiny::showNotification("Only R files are supported", type = "error")
           }
 
           shiny::incProgress(0.4)
@@ -214,48 +374,72 @@ create_appserver <- function() {
       rv$processing <- FALSE
     })
 
+    # Preview output
+    output$preview <- shiny::renderText({
+      if (rv$content == "") {
+        return("Upload an R file and click 'Convert' to see a preview.")
+      }
+      return(rv$content)
+    })
+
+    # Conversion status
     output$conversionStatus <- shiny::renderText({
-      if (rv$processing) {
-        "Converting..."
-      } else if (!is.null(rv$last_conversion)) {
-        base::format(rv$last_conversion, "Last converted: %H:%M:%S")
-      } else {
-        ""
+      if (is.null(rv$last_conversion)) {
+        return("")
+      }
+      return(paste("Last converted:", format(rv$last_conversion, "%H:%M:%S")))
+    })
+
+    # Copy button action
+    shiny::observeEvent(input$copy, {
+      if (rv$content != "") {
+        clipr::write_clip(rv$content)
+        shiny::showNotification("Content copied to clipboard", type = "message")
       }
     })
 
-    output$preview <- shiny::renderText({
-      shiny::req(rv$content)
-      rv$content
-    })
-
-    shiny::observeEvent(input$copy, {
-      shiny::req(rv$content)
-      tryCatch({
-        content_to_copy <- rv$content
-        clipr::write_clip(content_to_copy)
-        shiny::showNotification("Content copied to clipboard!", type = "message")
-      }, error = function(e) {
-        shiny::showNotification("Failed to copy to clipboard", type = "error")
-      })
-    })
-
+    # Download handler
     output$downloadMD <- shiny::downloadHandler(
       filename = function() {
-        base::sub("\\.[^.]+$", ".md", input$file$name)
+        orig_name <- tools::file_path_sans_ext(input$file$name)
+        paste0(orig_name, ".md")
       },
       content = function(file) {
-        content_to_save <- rv$content
-        base::writeLines(content_to_save, file)
+        if (rv$content != "") {
+          writeLines(rv$content, file)
+        } else {
+          writeLines("No content to download. Convert a file first.", file)
+        }
       }
     )
 
+    # Create new file in RStudio
+    # Create new file in RStudio
     shiny::observeEvent(input$createNew, {
-      shiny::req(rv$content)
-      if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-        rstudioapi::documentNew(text = rv$content, type = "r")
+      if (rv$content != "") {
+        tryCatch({
+          if (rstudioapi::isAvailable()) {
+            orig_name <- tools::file_path_sans_ext(input$file$name)
+
+            # Use "rmarkdown" instead of "md" for the type parameter
+            new_doc <- rstudioapi::documentNew(
+              text = rv$content,
+              type = "rmarkdown"  # Changed from "md" to "rmarkdown"
+            )
+
+            shiny::showNotification("File opened in RStudio as an R Markdown document. Use 'Save As' to save it with .md extension.",
+                                    type = "message")
+          } else {
+            shiny::showNotification("RStudio API not available", type = "warning")
+          }
+        }, error = function(e) {
+          shiny::showNotification(
+            paste("Error creating file in RStudio:", e$message),
+            type = "error"
+          )
+        })
       } else {
-        shiny::showNotification("RStudio API not available", type = "warning")
+        shiny::showNotification("No content to open. Convert a file first.", type = "warning")
       }
     })
   }

@@ -49,7 +49,7 @@ MDtoR <- function(file,
   }
 }
 
-#MDtoR(file = "~/Documents/GitHub/documentation/R/Snippets.md")
+# MDtoR(file = "~/Documents/GitHub/documentation/R/Snippets.md")
 
 
 

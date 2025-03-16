@@ -1,8 +1,18 @@
+#' Title
+#'
+#' @param x Does this
+#'
+#' @returns Return that
+#'
 
-#' I am roxygen2
+mean(c(1,2,13))
 
-#print("Hello")
 
-## Two hastags
 
-### Just plain text
+# I am a Header
+
+library(ggplot2)
+ggplot(data=mpg, aes(x=class)) + geom_bar()
+
+
+print("Hello World")
