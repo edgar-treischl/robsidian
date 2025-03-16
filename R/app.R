@@ -57,12 +57,7 @@ process_r_file <- function(file_path, doc_level, include_output = FALSE) {
 
     if (doc_level == 0) {
       # Simply wrap everything in an R code block
-      if (!include_output) {
-        formatted_content <- c("```r", r_content, "```")
-      } else {
-        # Execute code and capture output using evaluate
-        formatted_content <- execute_r_with_evaluate(r_content)
-      }
+      formatted_content <- c("```r", r_content, "```")
       return(list(content = formatted_content, yaml = NULL))
     }
     else if (doc_level == 1) {
@@ -127,13 +122,7 @@ process_r_file <- function(file_path, doc_level, include_output = FALSE) {
       # Add code section with or without output
       if (length(actual_code) > 0) {
         # THIS IS THE KEY CHANGE: We need to check include_output here
-        if (!include_output) {
-          formatted_content <- c(formatted_content, "```r", actual_code, "```")
-        } else {
-          # Execute code and capture output
-          code_with_output <- execute_r_with_evaluate(actual_code)
-          formatted_content <- c(formatted_content, code_with_output)
-        }
+        formatted_content <- c(formatted_content, "```r", actual_code, "```")
       }
 
       # Add comments that appear after code
@@ -282,7 +271,7 @@ create_apui <- function() {
     sidebar = bslib::sidebar(
       shiny::fileInput("file", "Upload R file", accept = c(".R")),
       shiny::selectInput("documentation", "Documentation Level", choices = DOCUMENTATION_CHOICES, selected = 1),
-      shiny::checkboxInput("include_output", "Include R chunk output", value = FALSE),
+      #shiny::checkboxInput("include_output", "Include R chunk output", value = FALSE),
       shiny::actionButton("convert", "Convert", class = "btn-primary w-100"),
       shiny::hr(),
       shiny::downloadButton("downloadMD", "Download MD", class = "w-100"),
@@ -324,10 +313,10 @@ create_appserver <- function() {
       rv$last_conversion <- NULL
 
       # Show a message if including output
-      if(input$include_output) {
-        shiny::showNotification("Executing R code and capturing output. This may take a moment...",
-                                type = "message", duration = 3)
-      }
+      # if(input$include_output) {
+      #   shiny::showNotification("Executing R code and capturing output. This may take a moment...",
+      #                           type = "message", duration = 3)
+      # }
 
       shiny::withProgress(message = 'Processing file...', value = 0, {
         tryCatch({
