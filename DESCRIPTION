@@ -1,8 +1,8 @@
 Package: robsidian
-Title: Use Obsidian in R
+Title: Get Access to a Obsidian Vault in R
 Version: 0.0.0.1
 Authors@R: person("Edgar", "Treischl", 
-                email = "copycat@edgar-treischl.de",
+                email = "robsidian@edgar-treischl.de",
                 comment = c(ORCID = "0000-0001-5627-9125"),
                 role = c("aut", "cre"))
 Description: Provides an interface to the Obsidian API to interact with
@@ -15,8 +15,12 @@ URL: https://edgar-treischl.github.io/robsidian/
 Imports: 
     bslib,
     cli,
+    clipr,
     commonmark,
     fs,
     htmltools,
+    knitr,
     rmarkdown,
-    shiny
+    rstudioapi,
+    shiny,
+    shinyjs
