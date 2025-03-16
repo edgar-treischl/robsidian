@@ -268,7 +268,9 @@ evaluate_chunk <- function(chunk_lines) {
 
 
 
+
 # Create the app UI
+
 
 create_apui <- function() {
   ui <- bslib::page_sidebar(

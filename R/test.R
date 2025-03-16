@@ -14,3 +14,4 @@
 #'
 #'
 #' ## paste0("The mean is ", mymean)
+
