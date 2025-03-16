@@ -1,9 +1,16 @@
-library(shiny)
-library(bslib)
-library(knitr)
-library(clipr)
-library(rmarkdown)
-library(shinyjs)
+#' MD Creator App
+#'
+#' @returns NULL
+#' @export
+#'
+md_creator <- function() {
+  # Run the app
+  shiny::shinyApp(
+    ui = create_apui(),
+    server = create_appserver()
+  )
+}
+
 
 # Constants
 DOCUMENTATION_CHOICES <- c(
@@ -14,29 +21,23 @@ DOCUMENTATION_CHOICES <- c(
 
 # Utility Functions --------------------------------------------------------
 
-#' Safely read file contents
-#' @param file_path Path to file
-#' @return Character vector of file content
+# Safely read file contents
 safe_read_file <- function(file_path) {
   tryCatch({
-    # Try reading with UTF-8 encoding first
-    content <- readLines(file_path, warn = FALSE, encoding = "UTF-8")
+    content <- base::readLines(file_path, warn = FALSE, encoding = "UTF-8")
     if (length(content) == 0) {
-      content <- readLines(file_path, warn = FALSE)  # Try system default encoding
+      content <- base::readLines(file_path, warn = FALSE)
     }
     content
   }, error = function(e) {
-    # If all else fails, read raw and convert
-    raw_content <- readBin(file_path, "raw", n = file.info(file_path)$size)
-    content <- rawToChar(raw_content)
-    strsplit(content, "\n")[[1]]
+    raw_content <- base::readBin(file_path, "raw", n = base::file.info(file_path)$size)
+    content <- base::rawToChar(raw_content)
+    base::strsplit(content, "\n")[[1]]
   })
 }
 
-#' Extract YAML header from content
-#' @param content Character vector of file content
-#' @return List with yaml and content components
-utils_extract_yaml <- function(content) {
+# Extract YAML header from content
+extract_yaml <- function(content) {
   yaml_lines <- NULL
   if (length(which(content == "---")) >= 2) {
     yaml_start <- which(content == "---")[1]
@@ -49,297 +50,214 @@ utils_extract_yaml <- function(content) {
   return(list(yaml = yaml_lines, content = content))
 }
 
-#' Process R file
-#' @param file_path Path to R file
-#' @param preserve_yaml Boolean to preserve YAML
-#' @return List with content and yaml components
-utils_process_r_file <- function(file_path, preserve_yaml) {
+# Process R file
+process_r_file <- function(file_path, preserve_yaml, doc_level) {
   tryCatch({
-    # Safely read the file
     r_content <- safe_read_file(file_path)
-
-    # Remove any NULL or NA entries
     r_content <- r_content[!is.na(r_content)]
 
-    # Create a basic markdown version as fallback
-    basic_md <- c("```r", r_content, "```")
+    if (doc_level == 2) {
+      # Convert roxygen comments to text
+      r_content <- base::gsub("^#' ", "", r_content)
+    } else if (doc_level == 1) {
+      # Keep chunk headers
+      r_content <- base::gsub("^#' @", "", r_content)
+    }
 
-    # Try to process with spin
-    temp_r <- tempfile(fileext = ".R")
-    writeLines(r_content, temp_r, useBytes = TRUE)
+    basic_md <- r_content  # Don't wrap in triple backticks
+    temp_r <- base::tempfile(fileext = ".R")
+    base::writeLines(r_content, temp_r, useBytes = TRUE)
 
     rmd_content <- tryCatch({
-      temp_spin <- knitr::spin(temp_r, knit = FALSE, format = "Rmd",
-                               comment = c("^#+'[ ]?", "^#+'[ ]?"))
-      readLines(temp_spin, warn = FALSE)
+      temp_spin <- knitr::spin(temp_r, knit = FALSE, format = "Rmd", comment = c("^#+'[ ]?", "^#+'[ ]?"))
+      base::readLines(temp_spin, warn = FALSE)
     }, error = function(e) {
-      basic_md  # Return basic markdown if spin fails
+      basic_md
     })
 
-    # Set up YAML header
-    yaml_header <- c("---", "output: github_document", "---")
-
-    # Try to render to markdown
-    temp_output <- tempfile(fileext = ".md")
+    temp_output <- base::tempfile(fileext = ".md")
 
     tryCatch({
-      # Create temporary Rmd
-      temp_rmd <- tempfile(fileext = ".Rmd")
-      writeLines(c(yaml_header, "", rmd_content), temp_rmd)
-
-      # Render to markdown
-      rmarkdown::render(
-        temp_rmd,
-        output_format = rmarkdown::md_document(variant = "gfm"),
-        output_file = temp_output,
-        quiet = TRUE
-      )
-
-      # Read the rendered content
-      content <- readLines(temp_output, warn = FALSE)
-
+      temp_rmd <- base::tempfile(fileext = ".Rmd")
+      base::writeLines(rmd_content, temp_rmd)
+      rmarkdown::render(temp_rmd, output_format = rmarkdown::md_document(variant = "gfm"), output_file = temp_output, quiet = TRUE)
+      content <- base::readLines(temp_output, warn = FALSE)
     }, error = function(e) {
-      # If rendering fails, use basic markdown
       content <- basic_md
     })
 
-    return(list(
-      content = content,
-      yaml = yaml_header
-    ))
-
+    return(list(content = content, yaml = NULL))
   }, error = function(e) {
-    # Ultimate fallback: return the file content as plain code block
     r_content <- safe_read_file(file_path)
-    return(list(
-      content = c("```r", r_content, "```"),
-      yaml = c("---", "output: github_document", "---")
-    ))
+    return(list(content = r_content, yaml = NULL))
   })
 }
 
-#' Process Rmd file
-#' @param file_path Path to Rmd file
-#' @param preserve_yaml Boolean to preserve YAML
-#' @return List with content and yaml components
-utils_process_rmd_file <- function(file_path, preserve_yaml) {
+# Process Rmd file
+process_rmd_file <- function(file_path, preserve_yaml) {
   tryCatch({
-    # Safely read the file
     original_content <- safe_read_file(file_path)
-
-    # Extract YAML and handle empty content
-    yaml_result <- utils_extract_yaml(original_content)
+    yaml_result <- extract_yaml(original_content)
 
     yaml_header <- if (preserve_yaml && !is.null(yaml_result$yaml)) {
       yaml_result$yaml
     } else {
-      c("---", "output: github_document", "---")
+      NULL
     }
 
-    # Create temporary Rmd for rendering
-    temp_rmd <- tempfile(fileext = ".Rmd")
-    writeLines(c(yaml_header, "", yaml_result$content), temp_rmd)
+    temp_rmd <- base::tempfile(fileext = ".Rmd")
+    base::writeLines(yaml_result$content, temp_rmd)
+    temp_output <- base::tempfile(fileext = ".md")
 
-    # Try to render to markdown
-    temp_output <- tempfile(fileext = ".md")
     tryCatch({
-      rmarkdown::render(
-        temp_rmd,
-        output_format = rmarkdown::md_document(variant = "gfm"),
-        output_file = temp_output,
-        quiet = TRUE
-      )
-      content <- readLines(temp_output, warn = FALSE)
+      rmarkdown::render(temp_rmd, output_format = rmarkdown::md_document(variant = "gfm"), output_file = temp_output, quiet = TRUE)
+      content <- base::readLines(temp_output, warn = FALSE)
     }, error = function(e) {
-      # If rendering fails, use content as-is
       content <- yaml_result$content
     })
 
-    return(list(
-      content = content,
-      yaml = yaml_header
-    ))
-
+    return(list(content = content, yaml = yaml_header))
   }, error = function(e) {
-    # Ultimate fallback: return the file content as-is
     content <- safe_read_file(file_path)
-    return(list(
-      content = content,
-      yaml = c("---", "output: github_document", "---")
-    ))
+    return(list(content = content, yaml = NULL))
   })
 }
 
-ui <- page_sidebar(
-  title = "Obsidian Markdown Creator",
-  useShinyjs(),
-  sidebar = sidebar(
-    fileInput("file", "Upload R or Rmd file",
-              accept = c(".R", ".Rmd", ".rmd")),
-    tooltip(
-      selectInput("documentation", "Documentation Level",
-                  choices = DOCUMENTATION_CHOICES,
-                  selected = 1),
-      "Level 0: Pure code only\nLevel 1: Code with chunk headers\nLevel 2: Code with all text as roxygen comments"
+create_apui <- function() {
+  ui <- bslib::page_sidebar(
+    title = "Obsidian Markdown Creator",
+    shinyjs::useShinyjs(),
+    sidebar = bslib::sidebar(
+      shiny::fileInput("file", "Upload R or Rmd file", accept = c(".R", ".Rmd", ".rmd")),
+      bslib::tooltip(
+        shiny::selectInput("documentation", "Documentation Level", choices = DOCUMENTATION_CHOICES, selected = 1),
+        "Level 0: Pure code only\nLevel 1: Code with chunk headers\nLevel 2: Code with all text as roxygen comments"
+      ),
+      shiny::checkboxInput("preserve_yaml", "Preserve YAML Header (for Rmd files)", value = TRUE),
+      shiny::actionButton("convert", "Convert", class = "btn-primary w-100"),
+      shiny::hr(),
+      shiny::downloadButton("downloadMD", "Download Markdown", class = "w-100"),
+      shiny::actionButton("createNew", "Open in RStudio", class = "btn-primary mt-2 w-100", icon = shiny::icon("r-project"))
     ),
-    checkboxInput("preserve_yaml", "Preserve YAML Header (for Rmd files)",
-                  value = TRUE),
-    actionButton("convert", "Convert", class = "btn-primary w-100"),
-    hr(),
-    downloadButton("downloadMD", "Download Markdown", class = "w-100"),
-    actionButton("createNew", "Open in RStudio",
-                 class = "btn-primary mt-2 w-100",
-                 icon = icon("r-project"))
-  ),
-
-  card(
-    card_header(
-      div(
-        class = "d-flex justify-content-between align-items-center",
-        "Preview",
-        div(
-          style = "display: inline-flex; gap: 10px; align-items: center;",
-          span(textOutput("conversionStatus", inline = TRUE)),
-          actionButton("copy", "Copy", icon = icon("copy"),
-                       class = "btn-sm btn-outline-primary")
+    bslib::card(
+      bslib::card_header(
+        shiny::div(
+          class = "d-flex justify-content-between align-items-center",
+          "Preview",
+          shiny::div(
+            style = "display: inline-flex; gap: 10px; align-items: center;",
+            shiny::span(shiny::textOutput("conversionStatus", inline = TRUE)),
+            shiny::actionButton("copy", "Copy", icon = shiny::icon("copy"), class = "btn-sm btn-outline-primary")
+          )
         )
+      ),
+      bslib::card_body(
+        shiny::verbatimTextOutput("preview")
       )
-    ),
-    card_body(
-      verbatimTextOutput("preview")
     )
   )
-)
+}
 
-server <- function(input, output, session) {
-  # Reactive values
-  rv <- reactiveValues(
-    content = NULL,
-    yaml = NULL,
-    processing = FALSE,
-    last_conversion = NULL
-  )
+create_appserver <- function() {
+  server <- function(input, output, session) {
+    rv <- shiny::reactiveValues(
+      content = NULL,
+      yaml = NULL,
+      processing = FALSE,
+      last_conversion = NULL
+    )
 
-  # Auto-convert when file is uploaded
-  observeEvent(input$file, {
-    rv$yaml <- NULL
-    if (!is.null(input$file)) {
-      shinyjs::click("convert")
-    }
-  })
+    shiny::observeEvent(input$file, {
+      rv$yaml <- NULL
+      if (!is.null(input$file)) {
+        shinyjs::click("convert")
+      }
+    })
 
-  # Process file when convert button is clicked
-  observeEvent(input$convert, {
-    req(input$file)
+    shiny::observeEvent(input$convert, {
+      shiny::req(input$file)
+      rv$processing <- TRUE
+      rv$last_conversion <- NULL
 
-    # Set processing state
-    rv$processing <- TRUE
-    rv$last_conversion <- NULL
+      shiny::withProgress(message = 'Processing file...', value = 0, {
+        tryCatch({
+          file_path <- input$file$datapath
+          file_ext <- tools::file_ext(input$file$name)
 
-    withProgress(message = 'Processing file...', value = 0, {
+          shiny::incProgress(0.3)
+
+          doc_level <- input$documentation
+
+          result <- if (tolower(file_ext) == "r") {
+            process_r_file(file_path, input$preserve_yaml, doc_level)
+          } else if (tolower(file_ext) %in% c("rmd", "md")) {
+            process_rmd_file(file_path, input$preserve_yaml)
+          }
+
+          shiny::incProgress(0.3)
+
+          if (!is.null(result$content)) {
+            rv$content <- base::paste(result$content, collapse = "\n")
+            rv$yaml <- result$yaml
+            rv$last_conversion <- base::Sys.time()
+          } else {
+            shiny::showNotification("Error: Empty content returned", type = "error")
+          }
+
+          shiny::incProgress(0.4)
+
+        }, error = function(e) {
+          shiny::showNotification(base::paste("Error processing file:", e$message), type = "error", duration = NULL)
+        })
+      })
+
+      rv$processing <- FALSE
+    })
+
+    output$conversionStatus <- shiny::renderText({
+      if (rv$processing) {
+        "Converting..."
+      } else if (!is.null(rv$last_conversion)) {
+        base::format(rv$last_conversion, "Last converted: %H:%M:%S")
+      } else {
+        ""
+      }
+    })
+
+    output$preview <- shiny::renderText({
+      shiny::req(rv$content)
+      rv$content
+    })
+
+    shiny::observeEvent(input$copy, {
+      shiny::req(rv$content)
       tryCatch({
-        file_path <- input$file$datapath
-        file_ext <- tools::file_ext(input$file$name)
-
-        incProgress(0.3)
-
-        result <- if (tolower(file_ext) == "r") {
-          utils_process_r_file(file_path, input$preserve_yaml)
-        } else if (tolower(file_ext) %in% c("rmd", "md")) {
-          utils_process_rmd_file(file_path, input$preserve_yaml)
-        }
-
-        incProgress(0.3)
-
-        if (!is.null(result$content)) {
-          rv$content <- paste(result$content, collapse = "\n")
-          rv$yaml <- result$yaml
-          rv$last_conversion <- Sys.time()
-        } else {
-          showNotification("Error: Empty content returned", type = "error")
-        }
-
-        incProgress(0.4)
-
+        content_to_copy <- rv$content
+        clipr::write_clip(content_to_copy)
+        shiny::showNotification("Content copied to clipboard!", type = "message")
       }, error = function(e) {
-        showNotification(paste("Error processing file:", e$message),
-                         type = "error",
-                         duration = NULL)
+        shiny::showNotification("Failed to copy to clipboard", type = "error")
       })
     })
 
-    # Reset processing state
-    rv$processing <- FALSE
-  })
-
-  # Conversion status output
-  output$conversionStatus <- renderText({
-    if (rv$processing) {
-      "Converting..."
-    } else if (!is.null(rv$last_conversion)) {
-      format(rv$last_conversion, "Last converted: %H:%M:%S")
-    } else {
-      ""
-    }
-  })
-
-  # Preview output
-  output$preview <- renderText({
-    req(rv$content)
-    if (!is.null(rv$yaml)) {
-      paste(c(paste(rv$yaml, collapse = "\n"), "", rv$content), collapse = "\n")
-    } else {
-      rv$content
-    }
-  })
-
-  # Copy button handler
-  observeEvent(input$copy, {
-    req(rv$content)
-    tryCatch({
-      content_to_copy <- if (!is.null(rv$yaml)) {
-        paste(c(paste(rv$yaml, collapse = "\n"), "", rv$content), collapse = "\n")
-      } else {
-        rv$content
+    output$downloadMD <- shiny::downloadHandler(
+      filename = function() {
+        base::sub("\\.[^.]+$", ".md", input$file$name)
+      },
+      content = function(file) {
+        content_to_save <- rv$content
+        base::writeLines(content_to_save, file)
       }
-      clipr::write_clip(content_to_copy)
-      showNotification("Content copied to clipboard!", type = "message")
-    }, error = function(e) {
-      showNotification("Failed to copy to clipboard", type = "error")
+    )
+
+    shiny::observeEvent(input$createNew, {
+      shiny::req(rv$content)
+      if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
+        rstudioapi::documentNew(text = rv$content, type = "r")
+      } else {
+        shiny::showNotification("RStudio API not available", type = "warning")
+      }
     })
-  })
-
-  # Download handler
-  # Download handler
-  output$downloadMD <- downloadHandler(
-    filename = function() {
-      sub("\\.[^.]+$", ".md", input$file$name)
-    },
-    content = function(file) {
-      content_to_save <- if (!is.null(rv$yaml)) {
-        paste(c(paste(rv$yaml, collapse = "\n"), "", rv$content), collapse = "\n")
-      } else {
-        rv$content
-      }
-      writeLines(content_to_save, file)
-    }
-  )
-
-  # Create new document in RStudio
-  observeEvent(input$createNew, {
-    req(rv$content)
-    if (requireNamespace("rstudioapi", quietly = TRUE) && rstudioapi::isAvailable()) {
-      content_to_open <- if (!is.null(rv$yaml)) {
-        paste(c(paste(rv$yaml, collapse = "\n"), "", rv$content), collapse = "\n")
-      } else {
-        rv$content
-      }
-      rstudioapi::documentNew(text = content_to_open, type = "r")
-    } else {
-      showNotification("RStudio API not available", type = "warning")
-    }
-  })
+  }
 }
 
-# Run the app
-shinyApp(ui, server)
