@@ -189,6 +189,11 @@ obsidian_addin <- function() {
 
   # Server logic
   server <- function(input, output, session) {
+    # Add resource path for images
+    observe({
+      shiny::addResourcePath("obsidian_vault", home())
+    })
+
     output$current_file <- renderText({
       req(selected_file())
       # Get relative path from home directory
@@ -371,6 +376,8 @@ obsidian_addin <- function() {
     })
 
     # Markdown preview output
+    # Replace your existing markdown_preview renderUI function with this:
+    # Replace your markdown_preview renderUI function with this:
     output$markdown_preview <- renderUI({
       req(selected_file())
 
@@ -378,22 +385,60 @@ obsidian_addin <- function() {
         md_content <- readLines(selected_file(), warn = FALSE)
         md_content <- paste(md_content, collapse = "\n")
 
+        # Pre-process Obsidian-style wiki links for images if needed
+        md_content <- gsub("!\\[\\[([^\\]]+\\.(png|jpg|jpeg|gif|svg))\\]\\]",
+                           "![](\\1)",
+                           md_content)
+
         # Process code blocks
         md_content <- gsub("```(\\w+)\n", "```\\1\n", md_content)
 
+        # Convert markdown to HTML
         html_content <- commonmark::markdown_html(md_content)
+
+        # Get current file directory
+        current_dir <- dirname(selected_file())
+
+        # Extract all image references from the HTML
+        image_matches <- gregexpr('src="([^":/]+(?:/[^":/]+)*\\.(png|jpg|jpeg|gif|svg))"', html_content)
+        image_refs <- regmatches(html_content, image_matches)
+
+        # If we found any images
+        if (length(image_refs) > 0 && length(image_refs[[1]]) > 0) {
+          # Process each image reference
+          for (img_ref in image_refs[[1]]) {
+            # Extract the image path
+            img_path <- sub('src="([^"]+)"', "\\1", img_ref)
+
+            # Create absolute path relative to current file's directory
+            abs_img_path <- file.path(current_dir, img_path)
+
+            # If file exists, create proper URL
+            if (file.exists(abs_img_path)) {
+              # Convert to URL path relative to vault root
+              rel_to_vault <- fs::path_rel(abs_img_path, home())
+              # Create new image reference
+              new_img_ref <- paste0('src="obsidian_vault/', rel_to_vault, '"')
+              # Replace in the HTML content
+              html_content <- gsub(img_ref, new_img_ref, html_content, fixed = TRUE)
+            }
+          }
+        }
 
         tagList(
           HTML(html_content),
           tags$script("addCopyButtons();")
         )
       }, error = function(e) {
-        HTML("<p class='text-danger'>Error reading or rendering the file.</p>")
+        HTML(paste("<p class='text-danger'>Error processing file: ", as.character(e), "</p>"))
       })
     })
+
+
   }
 
   shinyApp(ui = ui, server = server)
 }
+
 
 
