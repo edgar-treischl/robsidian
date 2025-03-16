@@ -84,9 +84,10 @@ process_r_file <- function(file_path, doc_level, include_output = FALSE) {
         # Extract roxygen comments and convert to markdown
         roxygen_lines <- grep(roxygen_pattern, r_content, value = TRUE)
 
-        # Process roxygen comments to markdown
-        md_lines <- gsub(roxygen_pattern, "", roxygen_lines)
-        md_lines <- trimws(md_lines)
+        # Process roxygen comments to markdown using the new function
+        md_lines <- convert_roxygen_to_markdown(roxygen_lines)
+        # md_lines <- gsub(roxygen_pattern, "", roxygen_lines)
+        # md_lines <- trimws(md_lines)
 
         # Extract title and add to formatted content
         if (length(md_lines) > 0) {
@@ -154,131 +155,119 @@ process_r_file <- function(file_path, doc_level, include_output = FALSE) {
 
 # Function to execute R code
 # Function to execute R code and format output with #> prefix
+# Function to execute R code and split chunks at comments
 execute_r_with_evaluate <- function(code_lines) {
   # Load required packages
   if (!requireNamespace("evaluate", quietly = TRUE)) {
     install.packages("evaluate")
   }
 
-  tryCatch({
-    # Combine code lines into a single string
-    code_text <- paste(code_lines, collapse = "\n")
+  result <- character(0)
+  current_chunk <- character(0)
+  in_chunk <- FALSE
 
+  # Process line by line, splitting at comments
+  for (i in seq_along(code_lines)) {
+    line <- code_lines[i]
+
+    # Check if line is a comment (starts with #, but not #')
+    is_comment <- grepl("^\\s*#[^']", line)
+    is_empty <- trimws(line) == ""
+
+    if (is_comment) {
+      # If we were collecting code, finalize the chunk
+      if (length(current_chunk) > 0) {
+        chunk_result <- evaluate_chunk(current_chunk)
+        result <- c(result, chunk_result)
+        current_chunk <- character(0)
+        in_chunk <- FALSE
+      }
+
+      # Add the comment as normal text
+      result <- c(result, line)
+    } else if (is_empty) {
+      # Empty lines within a chunk stay with the chunk
+      if (in_chunk) {
+        current_chunk <- c(current_chunk, line)
+      } else {
+        # Empty lines outside chunks just get added
+        result <- c(result, line)
+      }
+    } else {
+      # This is code - add to current chunk
+      current_chunk <- c(current_chunk, line)
+      in_chunk <- TRUE
+    }
+  }
+
+  # Finalize any remaining chunk
+  if (length(current_chunk) > 0) {
+    chunk_result <- evaluate_chunk(current_chunk)
+    result <- c(result, chunk_result)
+  }
+
+  return(result)
+}
+
+# Helper function to evaluate a single chunk of code
+evaluate_chunk <- function(chunk_lines) {
+  tryCatch({
     # Create a new environment for execution
     eval_env <- new.env(parent = globalenv())
 
-    # Evaluate the code and capture all outputs
-    outputs <- evaluate::evaluate(code_text, envir = eval_env)
+    # Combine the chunk lines
+    chunk_text <- paste(chunk_lines, collapse = "\n")
 
-    # Process the outputs to build code+output format
+    # Evaluate and get outputs
+    outputs <- evaluate::evaluate(chunk_text, envir = eval_env)
+
+    # Process outputs with #> prefix format
     result_lines <- character(0)
 
-    # Track if we need to add a blank line
-    need_blank_line <- FALSE
-
-    for (i in seq_along(outputs)) {
-      if (inherits(outputs[[i]], "source")) {
-        # Get the source code lines
-        source_lines <- strsplit(as.character(outputs[[i]]), "\n")[[1]]
-
-        # Add blank line if needed (between code chunks)
-        if (need_blank_line && length(source_lines) > 0) {
-          result_lines <- c(result_lines, "")
-          need_blank_line <- FALSE
-        }
-
-        # Add the source lines
-        for (source_line in source_lines) {
-          result_lines <- c(result_lines, source_line)
-        }
-
-      } else if (inherits(outputs[[i]], "character") || inherits(outputs[[i]], "output")) {
+    for (output in outputs) {
+      if (inherits(output, "source")) {
+        # Add source code
+        source_lines <- strsplit(as.character(output), "\n")[[1]]
+        result_lines <- c(result_lines, source_lines)
+      } else if (inherits(output, "character") || inherits(output, "output")) {
         # Text output
-        if (length(outputs[[i]]) > 0 && !all(trimws(outputs[[i]]) == "")) {
-          for (output_line in outputs[[i]]) {
-            if (trimws(output_line) != "") {
-              result_lines <- c(result_lines, paste0("#> ", output_line))
-            }
+        if (length(output) > 0 && !all(trimws(output) == "")) {
+          for (out_line in output) {
+            result_lines <- c(result_lines, paste0("#> ", out_line))
           }
-          need_blank_line <- TRUE
         }
-
-      } else if (inherits(outputs[[i]], "message")) {
-        # Message output
-        msg_content <- conditionMessage(outputs[[i]])
+      } else if (inherits(output, "message") || inherits(output, "warning") || inherits(output, "error")) {
+        # Messages, warnings, errors
+        msg_type <- class(output)[1]
+        msg_content <- conditionMessage(output)
         msg_lines <- strsplit(msg_content, "\n")[[1]]
+
+        result_lines <- c(result_lines, paste0("#> ", toupper(msg_type), ":"))
         for (msg_line in msg_lines) {
-          if (trimws(msg_line) != "") {
-            result_lines <- c(result_lines, paste0("#> ", msg_line))
-          }
+          result_lines <- c(result_lines, paste0("#> ", msg_line))
         }
-        need_blank_line <- TRUE
-
-      } else if (inherits(outputs[[i]], "warning")) {
-        # Warning output
-        warn_content <- conditionMessage(outputs[[i]])
-        warn_lines <- strsplit(warn_content, "\n")[[1]]
-        result_lines <- c(result_lines, "#> Warning:")
-        for (warn_line in warn_lines) {
-          if (trimws(warn_line) != "") {
-            result_lines <- c(result_lines, paste0("#> ", warn_line))
-          }
-        }
-        need_blank_line <- TRUE
-
-      } else if (inherits(outputs[[i]], "error")) {
-        # Error output
-        error_content <- conditionMessage(outputs[[i]])
-        error_lines <- strsplit(error_content, "\n")[[1]]
-        result_lines <- c(result_lines, "#> Error:")
-        for (error_line in error_lines) {
-          if (trimws(error_line) != "") {
-            result_lines <- c(result_lines, paste0("#> ", error_line))
-          }
-        }
-        need_blank_line <- TRUE
-
-      } else if (inherits(outputs[[i]], "recordedplot")) {
-        # Skip plots or handle differently if needed
+      } else if (inherits(output, "recordedplot")) {
+        # Skip plots or handle differently
         result_lines <- c(result_lines, "#> [Plot output not shown]")
-        need_blank_line <- TRUE
-
-      } else if (inherits(outputs[[i]], "value") && !is.null(outputs[[i]]$visible) && outputs[[i]]$visible) {
+      } else if (inherits(output, "value") && !is.null(output$visible) && output$visible) {
         # Print visible values
-        value_text <- capture.output(print(outputs[[i]]$value))
+        value_text <- capture.output(print(output$value))
         if (length(value_text) > 0 && !all(trimws(value_text) == "")) {
           for (val_line in value_text) {
-            if (trimws(val_line) != "") {
-              result_lines <- c(result_lines, paste0("#> ", val_line))
-            }
+            result_lines <- c(result_lines, paste0("#> ", val_line))
           }
-          need_blank_line <- TRUE
         }
       }
     }
 
-    # Ensure we end with a blank line for readability
-    if (length(result_lines) > 0 && trimws(result_lines[length(result_lines)]) != "") {
-      result_lines <- c(result_lines, "")
-    }
-
-    # Return code and outputs in a code block
+    # Return as R code block
     return(c("```r", result_lines, "```"))
   }, error = function(e) {
-    # If overall evaluation fails, format as an error after the code
+    # If evaluation fails, return with error message
     error_message <- conditionMessage(e)
-    error_lines <- strsplit(error_message, "\n")[[1]]
-
-    # Return the code with the error message
-    result <- c(code_lines, "#> Error: ")
-    for (line in error_lines) {
-      result <- c(result, paste0("#> ", line))
-    }
-
-    return(c("```r", result, "```"))
+    return(c("```r", chunk_lines, paste0("#> Error: ", error_message), "```"))
   })
 }
-
 
 
 # Process Rmd file
@@ -445,3 +434,40 @@ create_appserver <- function() {
   }
 }
 
+
+# Convert roxygen comments to Markdown format
+convert_roxygen_to_markdown <- function(roxygen_lines) {
+  md_lines <- character(0)
+
+  for (i in seq_along(roxygen_lines)) {
+    line <- roxygen_lines[i]
+    # Remove the roxygen prefix (#')
+    clean_line <- gsub("^\\s*#'\\s*", "", line)
+
+    # Convert @param to "- param: "
+    if (grepl("^@param", clean_line)) {
+      # Format: @param name description -> - param: name description
+      param_content <- sub("^@param\\s+", "", clean_line)
+      md_lines <- c(md_lines, paste0("- param: ", param_content))
+    }
+    # Convert @returns/@return to "- returns: "
+    else if (grepl("^@returns?", clean_line)) {
+      # Format: @returns description -> - returns: description
+      return_desc <- sub("^@returns?\\s+", "", clean_line)
+      md_lines <- c(md_lines, paste0("- returns: ", return_desc))
+    }
+    # Other roxygen tags - remove @ and format as list items
+    else if (grepl("^@", clean_line)) {
+      # Extract the tag name without @
+      tag_name <- sub("^@([a-zA-Z0-9_]+)\\s+.*$", "\\1", clean_line)
+      tag_content <- sub("^@[a-zA-Z0-9_]+\\s+", "", clean_line)
+      md_lines <- c(md_lines, paste0("- ", tag_name, ": ", tag_content))
+    }
+    # Title or normal text
+    else {
+      md_lines <- c(md_lines, clean_line)
+    }
+  }
+
+  return(md_lines)
+}

@@ -5,14 +5,12 @@
 #' @returns Return that
 #'
 
-mean(c(1,2,13))
+mymean <- mean(c(1,2,13))
 
-
-
-# I am a Header
+## I am a sub Header
 
 library(ggplot2)
-ggplot(data=mpg, aes(x=class)) + geom_bar()
+ploti <- ggplot(data=mpg, aes(x=class)) + geom_bar()
 
 
-print("Hello World")
+## paste0("The mean is ", mymean)
