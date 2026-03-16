@@ -1,0 +1,22 @@
+name: robisidan
+description: Obsidian for R Viewer
+dev_path: archiv
+status: archiv
+role: project
+tags:
+  - backend
+  - python
+language: python
+setup:
+  - pip install -e .
+  - pre-commit install
+env:
+  - .env.example
+services:
+  - postgres
+  - redis
+depends_on:
+  - my-core-lib
+workspace: []
+update_strategy: []
+priority: []
